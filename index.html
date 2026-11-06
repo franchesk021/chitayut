@@ -61,7 +61,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
 .reader p{margin:0 0 1em}
 .reader .w{border-radius:4px;cursor:pointer;transition:color .2s}
 .reader .w.done{color:var(--done)}
-.reader .w.now{background:var(--hi);color:var(--hi-ink);padding:1px 2px;margin:0 -2px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.reader .w.now{background:rgba(255,210,63,.42);color:var(--ink);box-shadow:0 0 0 1px rgba(255,210,63,.55);padding:1px 2px;margin:0 -2px;border-radius:4px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .empty{color:var(--muted);font-size:15px;padding:18px;text-align:center}
 
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
@@ -80,6 +80,14 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
 .dict{display:block;width:100%;margin-top:8px;font:500 15px var(--f-body);padding:9px 12px;border-radius:12px;border:1px solid var(--line);background:var(--soft);color:var(--ink);resize:none;max-height:64px}
 .dict:focus-visible{outline:3px solid var(--hi);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.linkrow{display:flex;gap:8px;margin-top:10px}
+.linkrow input{flex:1;min-width:0;font:inherit;font-size:15px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.linkrow .pickbtn{flex:none}
+.heard{font:500 13px var(--f-body);color:var(--muted);min-height:1.2em;margin-top:4px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.meta{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.meta input,.meta select{font:500 13px var(--f-body);padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);min-width:0}
+.meta input{flex:1 1 120px}
+.meta select{flex:0 1 auto}
 </style></head><body>
 
 
@@ -104,6 +112,10 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       <input class="hid" id="pickPhoto" type="file" accept="image/*" multiple aria-label="Выбрать фото">
       <input class="hid" id="pickFile" type="file" multiple aria-label="Выбрать файл">
       <input class="hid" id="pickCam" type="file" accept="image/*" capture="environment" aria-label="Снять камерой">
+    </div>
+    <div class="linkrow">
+      <input id="urlIn" type="url" inputmode="url" autocomplete="off" placeholder="Вставь ссылку на рассказ" aria-label="Ссылка на рассказ">
+      <button class="pickbtn" id="urlGo" type="button">Добавить</button>
     </div>
     <details>
       <summary>Или вставить текст</summary>
@@ -133,6 +145,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       <div class="now-t" id="nowT">Добавь текст, чтобы начать.</div>
       <div class="prog" aria-hidden="true"><i id="prog"></i></div>
       <div class="stat" id="stat" role="status"></div>
+      <div class="heard" id="heard" aria-live="off"></div>
       <textarea class="dict" id="dict" rows="1" placeholder="Диктовка: нажми сюда, потом на микрофон на клавиатуре" aria-label="Диктовка с клавиатуры" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
     </div>
     <button class="go" id="go" type="button" aria-pressed="false">Слушать</button>
@@ -185,6 +198,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     if(!window.mammoth)await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js');
     return (await window.mammoth.extractRawText({arrayBuffer:await file.arrayBuffer()})).value;
   }
+  var ocrWorker=null;
   async function readImage(file){
     var sample=null;
     try{sample=window.claude&&window.claude.use?await window.claude.use('sample'):null}catch(e){}
@@ -198,9 +212,54 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       }catch(e){if(e&&e.code==='not_granted')throw new Error('Нет доступа к Claude для чтения фото')}
     }
     if(!window.Tesseract)await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js');
-    var res=await window.Tesseract.recognize(file,'rus+eng');
-    return res.data.text||'';
+    var src=await cropShot(file);
+    if(!ocrWorker)ocrWorker=window.Tesseract.createWorker('rus+eng');
+    var wk=await ocrWorker;
+    var res=await wk.recognize(src);
+    return cleanOcr(res.data);
   }
+  /* скриншот телефона: срезаем строку состояния сверху и панель кнопок снизу */
+  async function cropShot(file){
+    try{
+      var bmp=await createImageBitmap(file);
+      if(bmp.height/bmp.width<1.7)return file;
+      var top=Math.round(bmp.height*0.07),bot=Math.round(bmp.height*0.06),h=bmp.height-top-bot;
+      var c=document.createElement('canvas');c.width=bmp.width;c.height=h;
+      c.getContext('2d').drawImage(bmp,0,top,bmp.width,h,0,0,bmp.width,h);
+      return await new Promise(function(r){c.toBlob(function(b){r(b||file)},'image/png')});
+    }catch(e){return file}
+  }
+  /* выкидываем из распознанного мусор: адреса, часы, кнопки, кракозябры */
+  function junkLine(t,conf){
+    t=t.replace(/\s+/g,' ').trim();
+    if(!t)return true;
+    if(/https?:|www\.|\.(com|ru|io|org|net)\b|github|google|search\?|%3|\\|@|©|®|™/i.test(t))return true;
+    if(/^\d{1,2}[:.]\d{2}\b/.test(t))return true;
+    var chars=t.replace(/\s/g,'').length,letters=(t.match(/[A-Za-zА-Яа-яЁё]/g)||[]).length;
+    if(letters<3||letters/chars<0.72)return true;
+    var mixed=t.split(/\s+/).some(function(w){return /[А-Яа-яЁё]/.test(w)&&/[A-Za-z]/.test(w)&&w.length>2});
+    if(mixed)return true;
+    if(typeof conf==='number'&&conf<60)return true;
+    return false;
+  }
+  function cleanOcr(d){
+    var paras=[];
+    if(d&&d.paragraphs&&d.paragraphs.length){
+      d.paragraphs.forEach(function(p){
+        var ls=(p.lines||[]).filter(function(l){return !junkLine(l.text||'',l.confidence)}).map(function(l){return l.text.replace(/\s+/g,' ').trim()});
+        if(ls.length)paras.push(ls.join(' '));
+      });
+    }else{
+      var cur=[];
+      ((d&&d.text)||'').split('\n').forEach(function(l){
+        if(!l.trim()){if(cur.length)paras.push(cur.join(' '));cur=[];return}
+        if(!junkLine(l))cur.push(l.trim());
+      });
+      if(cur.length)paras.push(cur.join(' '));
+    }
+    return paras.join('\n\n');
+  }
+  window.__cleanOcr=cleanOcr;
   async function readAny(file){
     var e=ext(file.name),t=file.type||'';
     if(t.indexOf('image/')===0)return readImage(file);
@@ -209,31 +268,70 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     if(/^(txt|md|rtf|html)$/.test(e)||t.indexOf('text/')===0){var s=await file.text();return e==='html'?s.replace(/<[^>]+>/g,' '):s}
     throw new Error('Такой формат пока не читается');
   }
+  /* ---------- ссылки ---------- */
+  async function getWithTimeout(u){
+    var c=new AbortController(),t=setTimeout(function(){c.abort()},20000);
+    try{var r=await fetch(u,{signal:c.signal});if(!r.ok)throw new Error('http '+r.status);return await r.text()}finally{clearTimeout(t)}
+  }
+  function cleanWeb(t){
+    t=t.replace(/^[\s\S]*?Markdown Content:\s*/,'')
+       .replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[([^\]]*)\]\([^)]*\)/g,'$1')
+       .replace(/https?:\/\/\S+/g,'').replace(/^#+\s*/gm,'').replace(/[*_`>]+/g,'');
+    var out=[];
+    t.split(/\n{2,}|\n/).forEach(function(l){
+      l=l.replace(/\s+/g,' ').trim();
+      if(!l)return;
+      var words=(l.match(WORD)||[]).length;
+      if(words<6&&!/[.!?…»"]$/.test(l))return;
+      if(/cookie|подписывайтесь|поделиться|все права защищены|реклама|войти|регистрация/i.test(l)&&words<14)return;
+      out.push(l);
+    });
+    return out.join('\n\n');
+  }
+  async function readUrl(u){
+    var txt='',err=null;
+    try{txt=cleanWeb(await getWithTimeout('https://r.jina.ai/'+u))}catch(e){err=e}
+    if((txt.match(WORD)||[]).length<30){
+      try{
+        var html=await getWithTimeout('https://api.allorigins.win/raw?url='+encodeURIComponent(u));
+        var d=new DOMParser().parseFromString(html,'text/html');
+        Array.prototype.forEach.call(d.querySelectorAll('script,style,nav,header,footer,aside,form,noscript'),function(n){n.remove()});
+        var root=d.querySelector('article')||d.querySelector('main')||d.body;
+        var ps=Array.prototype.map.call(root.querySelectorAll('p'),function(p){return p.textContent});
+        txt=cleanWeb((ps.length>2?ps.join('\n\n'):root.textContent||''));
+      }catch(e){err=err||e}
+    }
+    if((txt.match(WORD)||[]).length<10)throw new Error('Не смог достать текст по ссылке. Открой рассказ, скопируй текст и вставь его ниже.');
+    return txt;
+  }
   var wait=function(ms){return new Promise(function(r){setTimeout(r,ms)})};
 
   /* ---------- state + files UI ---------- */
   var files=[],uid=0,$files=$('files');
+  var rfT=null;
   function renderFiles(){
+    var a=document.activeElement;
+    if(a&&a.tagName==='INPUT'&&a.closest&&a.closest('#files')){clearTimeout(rfT);rfT=setTimeout(renderFiles,700);return}
     $files.innerHTML=files.map(function(f){
-      var ic=(f.pasted?'TXT':(ext(f.name)||(f.type||'').split('/')[0]||'file')).slice(0,4).toUpperCase();
+      var ic=(f.url?'URL':f.pasted?'TXT':(ext(f.name)||(f.type||'').split('/')[0]||'file')).slice(0,4).toUpperCase();
       var line=f.status==='work'?esc(f.step):f.status==='ok'?'Слов в тексте: '+f.count:f.status==='bad'?esc(f.err):'В очереди';
       var right=f.status==='work'?'<div class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>':'<button class="x" data-rm="'+f.id+'" aria-label="Убрать файл">×</button>';
-      return '<div class="card file '+(f.status==='work'?'work':'')+'"><div class="ico">'+esc(ic)+'</div><div style="min-width:0"><div class="fname">'+esc(f.name)+'</div><div class="fstat '+f.status+'">'+line+'</div></div><div>'+right+'</div></div>';
+      return '<div class="card file '+(f.status==='work'?'work':'')+'"><div class="ico">'+esc(ic)+'</div><div style="min-width:0"><div class="fname">'+esc(f.name)+'</div><div class="fstat '+f.status+'">'+line+'</div>'+(f.status==='bad'?'':'<div class="meta"><input class="lbl" data-lbl="'+f.id+'" value="'+esc(f.label||'')+'" placeholder="Что это: глава 5, конец…" aria-label="Название файла"><select data-where="'+f.id+'" aria-label="Где в рассказе"><option value="auto"'+(f.where==='auto'||!f.where?' selected':'')+'>Порядок сам</option><option value="start"'+(f.where==='start'?' selected':'')+'>В начале</option><option value="end"'+(f.where==='end'?' selected':'')+'>В конце</option></select></div>')+'</div><div>'+right+'</div></div>';
     }).join('');
   }
   async function process(f){
-    f.status='work';f.step='Читаю файл…';renderFiles();
+    f.status='work';f.step=f.url?'Загружаю страницу…':'Читаю файл…';renderFiles();
     var t0=Date.now();
     try{
-      var text=f.text!=null?f.text:await readAny(f.file);
+      var text=f.text!=null?f.text:f.url?await readUrl(f.url):await readAny(f.file);
       f.step='Собираю текст по порядку…';renderFiles();
       text=(text||'').replace(/\r/g,'').replace(/[ \t]+/g,' ').trim();
-      var left=1500-(Date.now()-t0);if(left>0)await wait(left);
+      var left=500-(Date.now()-t0);if(left>0)await wait(left);
       var n=(text.match(WORD)||[]).length;
       if(n<3)throw new Error('В файле не нашлось текста');
       f.text=text;f.count=n;f.status='ok';
     }catch(e){
-      var l2=900-(Date.now()-t0);if(l2>0)await wait(l2);
+      var l2=300-(Date.now()-t0);if(l2>0)await wait(l2);
       f.status='bad';f.err=(e&&e.message)||'Не получилось прочитать файл';
     }
     renderFiles();buildReader();
@@ -262,10 +360,26 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   ['dragleave','drop'].forEach(function(n){drop.addEventListener(n,function(e){e.preventDefault();drop.classList.remove('over')})});
   drop.addEventListener('drop',function(e){if(e.dataTransfer&&e.dataTransfer.files.length)addFiles(e.dataTransfer.files)});
   document.addEventListener('paste',function(e){var fs=e.clipboardData&&e.clipboardData.files;if(fs&&fs.length&&e.target.tagName!=='TEXTAREA')addFiles(fs)});
+  function fById(id){return files.filter(function(f){return f.id===+id})[0]}
+  $files.addEventListener('input',function(e){var i=e.target.getAttribute('data-lbl');if(i){var f=fById(i);if(f)f.label=e.target.value}});
+  $files.addEventListener('change',function(e){
+    var i=e.target.getAttribute('data-lbl'),w=e.target.getAttribute('data-where'),f;
+    if(i&&(f=fById(i))){f.label=e.target.value;buildReader()}
+    if(w&&(f=fById(w))){f.where=e.target.value;buildReader()}
+  });
   $files.addEventListener('click',function(e){
     var b=e.target.closest('[data-rm]');if(!b)return;
     var id=+b.getAttribute('data-rm');files=files.filter(function(f){return f.id!==id});renderFiles();buildReader();
   });
+  function addUrl(){
+    var v=$('urlIn').value.trim();if(!v)return;
+    if(!/^https?:\/\//i.test(v))v='https://'+v;
+    var host=v.replace(/^https?:\/\//,'').split('/')[0];
+    var f={id:++uid,name:host,pasted:true,url:v,status:'queue'};files.push(f);$('urlIn').value='';
+    queue=queue.then(function(){return process(f)});renderFiles();
+  }
+  $('urlGo').addEventListener('click',addUrl);
+  $('urlIn').addEventListener('keydown',function(e){if(e.key==='Enter')addUrl()});
   $('pasteGo').addEventListener('click',function(){
     var v=$('paste').value.trim();if(!v)return;
     var f={id:++uid,name:'Вставленный текст',pasted:true,text:v,status:'queue'};files.push(f);$('paste').value='';
@@ -273,9 +387,18 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   });
 
   /* ---------- reader ---------- */
-  var T=[],spans=[],pos=0,nowFrom=0,nowTo=0,doneTo=0,listening=false,$reader=$('reader');
+  var pendingStart=false,T=[],spans=[],pos=0,nowFrom=0,nowTo=0,doneTo=0,listening=false,$reader=$('reader');
   function buildReader(){
-    var text=files.filter(function(f){return f.status==='ok'}).map(function(f){return f.text}).join('\n\n');
+    var rank={start:-1,auto:0,end:1};
+    function num(f){var m=(f.label||'').match(/\d+/);return m?+m[0]:null}
+    var ok=files.filter(function(f){return f.status==='ok'}).slice().sort(function(a,b){
+      var ra=rank[a.where||'auto'],rb=rank[b.where||'auto'];if(ra!==rb)return ra-rb;
+      var na=num(a),nb=num(b);
+      if(na!==null&&nb!==null&&na!==nb)return na-nb;
+      return a.id-b.id;
+    });
+    var text=ok.map(function(f){return f.text}).join('\n\n');
+    var oldT=T,keep=pos;
     T=[];spans=[];pos=0;nowFrom=nowTo=doneTo=0;
     if(!text){$reader.innerHTML='<div class="empty">Текста пока нет. Добавь файл или вставь текст выше.</div>';updateBar();return}
     var html='',idx=0;
@@ -289,6 +412,8 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       out+=esc(par.slice(last));html+='<p>'+out+'</p>';
     });
     $reader.innerHTML=html;spans=Array.prototype.slice.call($reader.querySelectorAll('.w'));updateBar();
+    if(keep>0&&keep<=T.length&&keep<=oldT.length){var same=true;for(var q=0;q<keep;q++)if(T[q]!==oldT[q]){same=false;break}if(same)paint(keep,Math.min(4,keep))}
+    if(pendingStart&&T.length){pendingStart=false;start()}
   }
   function paint(end,k){
     end=Math.max(0,Math.min(T.length,end));k=Math.max(1,Math.min(k||3,end));
@@ -326,6 +451,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   /* ---------- listening ---------- */
   var SR=window.SpeechRecognition||window.webkitSpeechRecognition,rec=null,wake=null,lostFor=0;
   var $go=$('go'),$stat=$('stat');
+  function heardNow(t){var h=$('heard');if(h)h.textContent=t?'Слышу: '+t.trim().slice(-120):''}
   function setStat(t,bad){$stat.textContent=t;$stat.className='stat'+(bad?' bad':'')}
   function onHeard(text){
     if(!T.length)return;
@@ -341,25 +467,44 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   }
   function startRec(){
     rec=new SR();rec.lang='ru-RU';rec.continuous=true;rec.interimResults=true;
+    rec.onstart=function(){if(listening)setStat('Микрофон включён. Говори, я слушаю.')};
+    rec.onaudiostart=function(){heardNow('')};
+    rec.onspeechstart=function(){setStat('Слышу голос…')};
     rec.onresult=function(ev){
-      var all='';for(var i=0;i<ev.results.length;i++)all+=ev.results[i][0].transcript+' ';
-      onHeard(all);
+      var all='';for(var i=Math.max(0,ev.results.length-3);i<ev.results.length;i++)all+=ev.results[i][0].transcript+' ';
+      gotAny=true;heardNow(all);onHeard(all);
     };
     rec.onerror=function(ev){
-      if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){
-        stop();setStat(location.protocol==='content:'?'Файл открыт через приложение (адрес content://), поэтому Chrome не даёт микрофон. Введи в строку адреса: file:///storage/emulated/0/Download/gde-chitayut.html':'Микрофон закрыт. Разреши его для этой страницы в настройках Chrome. Если страница открыта внутри Claude, микрофон недоступен: открой файл через Chrome.',true);
-      }else if(ev.error==='network'){setStat('Нет сети для распознавания речи.',true)}
+      var er=ev.error;
+      if(er==='not-allowed'||er==='service-not-allowed'){
+        stop();setStat(location.protocol==='content:'?'Файл открыт через приложение (content://), микрофон недоступен. Открой сайт в Chrome по ссылке.':'Микрофон не разрешён. Нажми значок замка слева от адреса, потом «Разрешения» и включи «Микрофон».',true);
+      }else if(er==='network'){setStat('Нет интернета для распознавания речи. Включи мобильные данные или Wi-Fi.',true)}
+      else if(er==='audio-capture'){stop();setStat('Телефон не отдаёт звук с микрофона. Закрой другие приложения, которые его используют (запись, звонок), и нажми «Слушать» ещё раз.',true)}
+      else if(er==='language-not-supported'){stop();setStat('Русский язык для распознавания не поддерживается на этом телефоне.',true)}
+      else if(er==='no-speech'){setStat('Пока тишина. Жду, когда начнут читать.')}
     };
     rec.onend=function(){if(listening){setTimeout(function(){if(listening){try{rec.start()}catch(e){startRec()}}},250)}};
     try{rec.start()}catch(e){}
   }
   async function keepAwake(){try{if(navigator.wakeLock)wake=await navigator.wakeLock.request('screen')}catch(e){}}
   document.addEventListener('visibilitychange',function(){if(listening&&document.visibilityState==='visible')keepAwake()});
-  function start(){
-    if(!T.length){setStat('Сначала добавь текст рассказа.',true);return}
+  var gotAny=false,wd=null;
+  async function ensureMic(){
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return null;
+    try{var st=await navigator.mediaDevices.getUserMedia({audio:true});st.getTracks().forEach(function(t){t.stop()});return null}
+    catch(e){return e&&e.name||'error'}
+  }
+  async function start(){
+    if(!T.length){
+      if(files.some(function(f){return f.status==='work'||f.status==='queue'})){pendingStart=true;setStat('Читаю первую страницу, сейчас начну слушать…');return}
+      setStat('Сначала добавь текст рассказа.',true);return}
     if(!SR){setStat('Этот браузер не умеет распознавать речь. Открой страницу в Chrome на Android или в Safari на iPhone.',true);return}
-    listening=true;lostFor=0;$go.classList.add('on');$go.textContent='Стоп';$go.setAttribute('aria-pressed','true');
+    setStat('Проверяю микрофон…');
+    var me=await ensureMic();
+    if(me){setStat(me==='NotAllowedError'?'Микрофон не разрешён. Нажми значок замка слева от адреса, «Разрешения», включи «Микрофон», потом снова «Слушать».':me==='NotFoundError'?'Микрофон на телефоне не найден.':'Не получилось включить микрофон ('+me+').',true);return}
+    listening=true;lostFor=0;gotAny=false;$go.classList.add('on');$go.textContent='Стоп';$go.setAttribute('aria-pressed','true');
     setStat('Идёт прослушивание. Держи экран включённым.');updateBar();keepAwake();startRec();
+    clearTimeout(wd);wd=setTimeout(function(){if(listening&&!gotAny)setStat('Слов пока нет. Проверь интернет и громкость. Если не помогает, нажми на поле «Диктовка» и говори в микрофон на клавиатуре.',true)},8000);
   }
   function stop(){
     listening=false;try{rec&&rec.stop()}catch(e){}
