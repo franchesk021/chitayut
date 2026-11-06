@@ -1,0 +1,394 @@
+name: Build Android app
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Create Android project
+        run: |
+          mkdir -p app/src/main/java/com/chitayut/app app/src/main/res/drawable app/src/main/res/values
+
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = 'Chitayut'
+          include ':app'
+          EOF
+
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          EOF
+
+          cat > app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+          android {
+              namespace 'com.chitayut.app'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.chitayut.app'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <queries>
+                  <intent>
+                      <action android:name="android.speech.RecognitionService" />
+                  </intent>
+              </queries>
+              <application
+                  android:label="Где читают"
+                  android:icon="@drawable/ic_launcher"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+                  android:allowBackup="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/drawable/ic_launcher.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#0C1118" android:pathData="M0,0h108v108h-108z" />
+              <path android:fillColor="#D86BFF" android:pathData="M24,36h60a8,8 0 0 1 8,8v28a8,8 0 0 1 -8,8h-60a8,8 0 0 1 -8,-8v-28a8,8 0 0 1 8,-8z" />
+              <path android:fillColor="#2A0838" android:pathData="M30,50h48v6h-48z" />
+              <path android:fillColor="#2A0838" android:pathData="M30,62h34v6h-34z" />
+          </vector>
+          EOF
+
+          cat > app/src/main/java/com/chitayut/app/MainActivity.java <<'EOF'
+          package com.chitayut.app;
+
+          import android.Manifest;
+          import android.app.Activity;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.graphics.Color;
+          import android.media.AudioManager;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.speech.RecognitionListener;
+          import android.speech.RecognizerIntent;
+          import android.speech.SpeechRecognizer;
+          import android.view.WindowManager;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          import java.util.ArrayList;
+
+          import org.json.JSONObject;
+
+          public class MainActivity extends Activity {
+              static final String HOST = "franchesk021.github.io";
+              static final String URL = "https://franchesk021.github.io/chitayut/";
+
+              WebView web;
+              SpeechRecognizer sr;
+              Handler h = new Handler(Looper.getMainLooper());
+              boolean want = false;
+              boolean preferOffline = true;
+              boolean pendingStart = false;
+              ValueCallback<Uri[]> fileCb;
+              AudioManager am;
+              int[] saved = new int[4];
+              boolean muted = false;
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  am = (AudioManager) getSystemService(AUDIO_SERVICE);
+                  web = new WebView(this);
+                  web.setBackgroundColor(Color.parseColor("#0C1118"));
+                  setContentView(web);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  web.addJavascriptInterface(new Bridge(), "AndroidSTT");
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                          Uri u = r.getUrl();
+                          if (HOST.equals(u.getHost())) return false;
+                          try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception e) { }
+                          return true;
+                      }
+                  });
+                  web.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public boolean onShowFileChooser(WebView w, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                          if (fileCb != null) fileCb.onReceiveValue(null);
+                          fileCb = cb;
+                          try {
+                              startActivityForResult(p.createIntent(), 1);
+                          } catch (Exception e) {
+                              fileCb = null;
+                              return false;
+                          }
+                          return true;
+                      }
+                  });
+                  web.loadUrl(URL);
+              }
+
+              @Override
+              protected void onActivityResult(int req, int res, Intent data) {
+                  super.onActivityResult(req, res, data);
+                  if (req == 1 && fileCb != null) {
+                      fileCb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(res, data));
+                      fileCb = null;
+                  }
+              }
+
+              @Override
+              public void onBackPressed() {
+                  if (web.canGoBack()) web.goBack(); else super.onBackPressed();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  end();
+                  super.onDestroy();
+              }
+
+              void js(String code) {
+                  final String c = code;
+                  runOnUiThread(new Runnable() {
+                      public void run() { web.evaluateJavascript(c, null); }
+                  });
+              }
+
+              void status(String m, boolean bad) {
+                  js("window.__stt&&window.__stt.status(" + JSONObject.quote(m) + "," + bad + ")");
+              }
+
+              void fail(String m) {
+                  want = false;
+                  js("window.__stt&&window.__stt.fail(" + JSONObject.quote(m) + ")");
+                  end();
+              }
+
+              class Bridge {
+                  @JavascriptInterface
+                  public void start() {
+                      runOnUiThread(new Runnable() {
+                          public void run() { begin(); }
+                      });
+                  }
+
+                  @JavascriptInterface
+                  public void stop() {
+                      runOnUiThread(new Runnable() {
+                          public void run() { end(); }
+                      });
+                  }
+              }
+
+              void begin() {
+                  if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                      pendingStart = true;
+                      requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 2);
+                      return;
+                  }
+                  if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+                      fail("На телефоне нет службы распознавания речи. Включи или обнови приложение Google.");
+                      return;
+                  }
+                  want = true;
+                  muteBeep(true);
+                  listen();
+              }
+
+              @Override
+              public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+                  if (code == 2 && pendingStart) {
+                      pendingStart = false;
+                      if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) begin();
+                      else fail("Микрофон не разрешён. Открой настройки телефона, Приложения, Где читают, Разрешения, включи Микрофон.");
+                  }
+              }
+
+              void end() {
+                  want = false;
+                  h.removeCallbacksAndMessages(null);
+                  if (sr != null) {
+                      try { sr.cancel(); } catch (Exception e) { }
+                      try { sr.destroy(); } catch (Exception e) { }
+                      sr = null;
+                  }
+                  muteBeep(false);
+              }
+
+              void muteBeep(boolean on) {
+                  int[] streams = {AudioManager.STREAM_MUSIC, AudioManager.STREAM_NOTIFICATION, AudioManager.STREAM_SYSTEM, AudioManager.STREAM_RING};
+                  try {
+                      if (on && !muted) {
+                          for (int i = 0; i < streams.length; i++) {
+                              saved[i] = am.getStreamVolume(streams[i]);
+                              try { am.setStreamVolume(streams[i], 0, 0); } catch (Exception e) { }
+                          }
+                          muted = true;
+                      } else if (!on && muted) {
+                          for (int i = 0; i < streams.length; i++) {
+                              try { am.setStreamVolume(streams[i], saved[i], 0); } catch (Exception e) { }
+                          }
+                          muted = false;
+                      }
+                  } catch (Exception e) { }
+              }
+
+              void listen() {
+                  if (!want) return;
+                  if (sr != null) {
+                      try { sr.destroy(); } catch (Exception e) { }
+                  }
+                  sr = SpeechRecognizer.createSpeechRecognizer(this);
+                  sr.setRecognitionListener(new RecognitionListener() {
+                      public void onReadyForSpeech(Bundle p) { status("Слушаю. Говори.", false); }
+                      public void onBeginningOfSpeech() { }
+                      public void onRmsChanged(float v) { }
+                      public void onBufferReceived(byte[] b) { }
+                      public void onEndOfSpeech() { }
+                      public void onEvent(int t, Bundle p) { }
+
+                      public void onPartialResults(Bundle b) { push(b); }
+
+                      public void onResults(Bundle b) {
+                          push(b);
+                          again(120);
+                      }
+
+                      public void onError(int e) {
+                          if (!want) return;
+                          if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                              fail("Микрофон не разрешён для приложения.");
+                          } else if (e == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || e == 13) {
+                              if (preferOffline) { preferOffline = false; again(200); }
+                              else fail("Русский язык для распознавания недоступен на этом телефоне.");
+                          } else if (e == SpeechRecognizer.ERROR_NETWORK || e == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
+                              if (preferOffline) { preferOffline = false; again(200); }
+                              else { status("Нет интернета для распознавания речи.", true); again(1500); }
+                          } else if (e == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                              again(600);
+                          } else {
+                              again(100);
+                          }
+                      }
+                  });
+                  Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ru-RU");
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "ru-RU");
+                  i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+                  i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                  i.putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, preferOffline);
+                  i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L);
+                  i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L);
+                  i.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+                  try {
+                      sr.startListening(i);
+                  } catch (Exception e) {
+                      again(500);
+                  }
+              }
+
+              void again(long ms) {
+                  if (!want) return;
+                  h.postDelayed(new Runnable() {
+                      public void run() { listen(); }
+                  }, ms);
+              }
+
+              void push(Bundle b) {
+                  if (b == null) return;
+                  ArrayList<String> l = b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+                  if (l == null || l.isEmpty()) return;
+                  String t = l.get(0);
+                  if (t == null || t.length() == 0) return;
+                  js("window.__stt&&window.__stt.heard(" + JSONObject.quote(t) + ")");
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk gde-chitayut.apk
+          gh release delete apk -y --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create apk gde-chitayut.apk --repo "$GITHUB_REPOSITORY" --title "Где читают (Android)" --notes "Скачай gde-chitayut.apk и установи на телефон."
