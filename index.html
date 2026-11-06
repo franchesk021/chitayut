@@ -89,6 +89,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
 .meta input{flex:1 1 120px}
 .meta select{flex:0 1 auto}
 .lval{font:600 12px var(--f-body);color:var(--muted);align-self:center;white-space:nowrap}
+.reader p.role{font-family:var(--f-body);font-weight:700;font-size:.62em;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:1.3em 0 .15em}
 </style></head><body>
 
 
@@ -127,8 +128,8 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   <section aria-labelledby="h-read">
     <h2 id="h-read">2. Читаем вместе</h2>
     <div class="tools">
-      <button class="mini" id="fMinus" type="button" aria-label="Мельче">A−</button>
-      <button class="mini" id="fPlus" type="button" aria-label="Крупнее">A+</button>
+      <button class="mini" id="fMinus" type="button" aria-label="Мельче">−</button>
+      <button class="mini" id="fPlus" type="button" aria-label="Крупнее">+</button>
       <span class="sp"></span>
       <button class="mini" id="toStart" type="button">В начало</button>
       <button class="mini" id="jump" type="button">К месту чтения</button>
@@ -182,6 +183,33 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   }
   function weight(s){return s.length>=5?1:s.length>=4?.8:s.length===3?.5:.2}
   var WORD=/[\p{L}\p{N}]+(?:[-'’][\p{L}\p{N}]+)*/gu;
+  /* роли в пьесах и диалогах: имя стоит отдельной строкой над репликой, его не склеиваем и не читаем вслух */
+  function isRoleLine(l){
+    l=(l||'').trim();if(!l||l.length>46)return false;
+    var w=l.match(WORD)||[];if(!w.length||w.length>5)return false;
+    var letters=l.replace(/[^A-Za-zА-Яа-яЁё]/g,'');
+    if(letters.length>=2&&letters===letters.toUpperCase()&&!/[,;]/.test(l))return true;
+    return /:$/.test(l)&&w.length<=4;
+  }
+  function capWords(l){
+    var w=l.replace(/[.:]$/,'').trim().split(/\s+/);
+    return w.length<=3&&w.every(function(x){return /^[А-ЯЁA-Z]/.test(x)&&!/[,;!?…]/.test(x)&&x.length<=20});
+  }
+  function isRole(par,next){
+    if(isRoleLine(par))return true;
+    var p=(par||'').trim();if(!p||p.length>34||!capWords(p))return false;
+    return (next?(next.match(WORD)||[]).length:0)>=4;
+  }
+  function mergeLines(lines){
+    var out=[],cur=[];
+    function flush(){if(cur.length)out.push(cur.join(' '));cur=[]}
+    lines.forEach(function(l){
+      l=(l||'').replace(/\s+/g,' ').trim();
+      if(!l){flush();return}
+      if(isRoleLine(l)){flush();out.push(l)}else cur.push(l);
+    });
+    flush();return out.join('\n');
+  }
 
   /* ---------- matching: where in the text is the reader? ---------- */
   function findPos(heard,T,p,wide,loose){
@@ -214,7 +242,15 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     }
     var pdf=await window.pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise,out=[];
-    for(var p=1;p<=Math.min(pdf.numPages,60);p++){var pg=await pdf.getPage(p),c=await pg.getTextContent();out.push(c.items.map(function(i){return i.str}).join(' '))}
+    for(var p=1;p<=Math.min(pdf.numPages,60);p++){
+      var pg=await pdf.getPage(p),c=await pg.getTextContent(),lines=[],cur='',lastY=null;
+      c.items.forEach(function(i){
+        var y=i.transform?i.transform[5]:0;
+        if(lastY!==null&&Math.abs(y-lastY)>2){lines.push(cur);cur=''}
+        cur+=(cur&&!/\s$/.test(cur)?' ':'')+i.str;lastY=y;
+      });
+      lines.push(cur);out.push(mergeLines(lines));
+    }
     return out.join('\n\n');
   }
   async function readDocx(file){
@@ -267,18 +303,25 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   }
   function cleanOcr(d){
     var paras=[];
+    function addLines(ls){
+      var cur=[];
+      ls.forEach(function(l){
+        if(isRoleLine(l)){if(cur.length)paras.push(cur.join(' '));cur=[];paras.push(l)}
+        else cur.push(l);
+      });
+      if(cur.length)paras.push(cur.join(' '));
+    }
     if(d&&d.paragraphs&&d.paragraphs.length){
       d.paragraphs.forEach(function(p){
-        var ls=(p.lines||[]).filter(function(l){return !junkLine(l.text||'',l.confidence)}).map(function(l){return l.text.replace(/\s+/g,' ').trim()});
-        if(ls.length)paras.push(ls.join(' '));
+        addLines((p.lines||[]).filter(function(l){return !junkLine(l.text||'',l.confidence)}).map(function(l){return l.text.replace(/\s+/g,' ').trim()}));
       });
     }else{
       var cur=[];
       ((d&&d.text)||'').split('\n').forEach(function(l){
-        if(!l.trim()){if(cur.length)paras.push(cur.join(' '));cur=[];return}
+        if(!l.trim()){addLines(cur);cur=[];return}
         if(!junkLine(l))cur.push(l.trim());
       });
-      if(cur.length)paras.push(cur.join(' '));
+      addLines(cur);
     }
     return paras.join('\n\n');
   }
@@ -300,11 +343,10 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     t=t.replace(/^[\s\S]*?Markdown Content:\s*/,'')
        .replace(/!\[[^\]]*\]\([^)]*\)/g,'').replace(/\[([^\]]*)\]\([^)]*\)/g,'$1')
        .replace(/https?:\/\/\S+/g,'').replace(/^#+\s*/gm,'').replace(/[*_`>]+/g,'');
-    var out=[];
-    t.split(/\n{2,}|\n/).forEach(function(l){
-      l=l.replace(/\s+/g,' ').trim();
-      if(!l)return;
+    var out=[],lines=t.split(/\n+/).map(function(l){return l.replace(/\s+/g,' ').trim()}).filter(Boolean);
+    lines.forEach(function(l,i){
       var words=(l.match(WORD)||[]).length;
+      if(isRole(l,lines[i+1])){out.push(l);return}
       if(words<6&&!/[.!?…»"]$/.test(l))return;
       if(/cookie|подписывайтесь|поделиться|все права защищены|реклама|войти|регистрация/i.test(l)&&words<14)return;
       out.push(l);
@@ -425,8 +467,9 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     T=[];spans=[];pos=0;nowFrom=nowTo=doneTo=0;
     if(!text){$reader.innerHTML='<div class="empty">Текста пока нет. Добавь файл или вставь текст выше.</div>';updateBar();return}
     var html='',idx=0;
-    text.split(/\n+/).forEach(function(par){
-      if(!par.trim())return;
+    var pars=text.split(/\n+/).filter(function(x){return x.trim()});
+    pars.forEach(function(par,pi){
+      if(isRole(par,pars[pi+1])){html+='<p class="role">'+esc(par.trim())+'</p>';return}
       var out='',last=0,m;WORD.lastIndex=0;
       while((m=WORD.exec(par))){
         out+=esc(par.slice(last,m.index))+'<span class="w" data-i="'+idx+'">'+esc(m[0])+'</span>';
@@ -449,7 +492,11 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     for(i=from;i<end;i++)spans[i]&&spans[i].classList.add('now');
     nowFrom=from;nowTo=end;pos=end;updateBar();
   }
+  var follow=true;
+  /* как только человек сам двинул экран, перестаём ехать за чтением; вернуть слежение: «К месту чтения», тап по слову или поиск */
+  ['touchmove','wheel'].forEach(function(n){window.addEventListener(n,function(){follow=false},{passive:true})});
   function scrollToNow(force){
+    if(!follow&&!force)return;
     var el=spans[Math.max(0,nowTo-1)];if(!el)return;
     var r=el.getBoundingClientRect(),vh=window.innerHeight;
     if(force||r.top<110||r.bottom>vh-190)el.scrollIntoView({block:'center',behavior:'smooth'});
@@ -464,10 +511,10 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   }
   $reader.addEventListener('click',function(e){
     var s=e.target.closest('.w');if(!s)return;
-    paint(+s.getAttribute('data-i')+1,1);conf=pos;lastT=Date.now();hist=[];setStat('Место выбрано вручную.');
+    follow=true;paint(+s.getAttribute('data-i')+1,1);conf=pos;lastT=Date.now();hist=[];setStat('Место выбрано вручную.');
   });
   $('toStart').addEventListener('click',function(){spans.forEach(function(s){s.classList.remove('done','now')});pos=0;conf=0;lastT=0;hist=[];nowFrom=nowTo=doneTo=0;updateBar();window.scrollTo({top:0,behavior:'smooth'})});
-  $('jump').addEventListener('click',function(){if(pos)scrollToNow(true)});
+  $('jump').addEventListener('click',function(){follow=true;if(pos)scrollToNow(true)});
   var fs=20;function setFs(d){fs=Math.max(15,Math.min(34,fs+d));document.documentElement.style.setProperty('--fs',fs+'px')}
   $('fMinus').addEventListener('click',function(){setFs(-2)});$('fPlus').addEventListener('click',function(){setFs(2)});
 
@@ -489,13 +536,13 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     conf=end;lastT=now;
     var t=Math.min(T.length,end+lead);
     if(t!==nowTo||k)paint(t,k||3);
-    scrollToNow(!!jump);setStat(jump?'Нашёл новое место в тексте.':'Слежу за чтением.');
+    scrollToNow(false);setStat(jump?'Нашёл новое место в тексте.':'Слежу за чтением.');
   }
   function onHeard(text){
     if(!T.length)return;
     var w=(text.match(WORD)||[]).map(stem);if(w.length<2)return;
     var heard=w.slice(-9),end=findPos(heard,T,conf,false);
-    if(end!==null&&end>=conf-3){lostFor=0;noteMatch(end,false);return}
+    if(end!==null&&end>=conf-3){lostFor=0;noteMatch(end,false,Math.min(3,heard.length));return}
     lostFor++;
     if(lostFor>=2||w.length>=7){
       var e2=findPos(w.slice(-12),T,conf,true);
@@ -531,7 +578,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     var e=findPos(w,T,conf,false,true);
     if(e===null)e=findPos(w,T,conf,true,true);
     if(e===null){setStat('Не нашёл такие слова в тексте: «'+v+'». Попробуй ещё раз.',true);return false}
-    noteMatch(e,true,Math.min(w.length,6));
+    follow=true;noteMatch(e,true,Math.min(w.length,6));
     setStat('Нашёл место по твоим словам.');
     $('findIn').blur();
     return true;
@@ -587,7 +634,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     setStat('Проверяю микрофон…');
     var me=NATIVE?null:await ensureMic();
     if(me){setStat(me==='NotAllowedError'?'Микрофон не разрешён. Нажми значок замка слева от адреса, «Разрешения», включи «Микрофон», потом снова «Слушать».':me==='NotFoundError'?'Микрофон на телефоне не найден.':'Не получилось включить микрофон ('+me+').',true);return}
-    listening=true;lostFor=0;gotAny=false;$go.classList.add('on');$go.textContent='Стоп';$go.setAttribute('aria-pressed','true');
+    follow=true;listening=true;lostFor=0;gotAny=false;$go.classList.add('on');$go.textContent='Стоп';$go.setAttribute('aria-pressed','true');
     setStat('Идёт прослушивание. Держи экран включённым.');updateBar();keepAwake();
     if(NATIVE){try{window.AndroidSTT.start()}catch(e){}}else startRec();
     clearTimeout(wd);wd=setTimeout(function(){if(listening&&!gotAny)setStat('Слов пока нет. Проверь интернет и громкость. Если не помогает, нажми на поле «Поиск по тексту» и говори в микрофон на клавиатуре.',true)},8000);
