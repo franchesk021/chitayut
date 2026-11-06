@@ -141,6 +141,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     <div class="linkrow" style="margin:0 0 10px">
       <input id="findIn" type="text" autocomplete="off" placeholder="Найти место: введи 3–4 слова оттуда" aria-label="Слова для поиска места в тексте">
       <button class="pickbtn" id="findGo" type="button">Найти</button>
+      <button class="pickbtn" id="findMic" type="button" aria-label="Найти место голосом">Голосом</button>
     </div>
     <div class="card reader" id="reader"><div class="empty">Текста пока нет. Добавь файл или вставь текст выше.</div></div>
     <p class="hint">Если микрофон страницы не работает, нажми на поле «Диктовка» внизу и на значок микрофона на клавиатуре телефона: приложение будет следить за напечатанными словами. Если приложение потеряло место, коснись слова в тексте, и подсветка перейдёт туда. Работает, пока экран включён и страница открыта: в фоне браузер выключает микрофон. Если запись разговоров в аудитории ограничена правилами, спроси разрешения. Распознавание речи в Chrome идёт через серверы Google.</p>
@@ -525,10 +526,10 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     rec.onspeechstart=function(){setStat('Слышу голос…')};
     rec.onresult=function(ev){
       var all='';for(var i=Math.max(0,ev.results.length-3);i<ev.results.length;i++)all+=ev.results[i][0].transcript+' ';
-      gotAny=true;heardNow(all);onHeard(all);
+      routeHeard(all);
     };
     rec.onerror=function(ev){
-      var er=ev.error;
+      var er=ev.error;if(findMode&&er!=='no-speech'){resetFindUI()}
       if(er==='not-allowed'||er==='service-not-allowed'){
         stop();setStat(location.protocol==='content:'?'Файл открыт через приложение (content://), микрофон недоступен. Открой сайт в Chrome по ссылке.':'Микрофон не разрешён. Нажми значок замка слева от адреса, потом «Разрешения» и включи «Микрофон».',true);
       }else if(er==='network'){setStat('Нет интернета для распознавания речи. Включи мобильные данные или Wi-Fi.',true)}
@@ -540,16 +541,50 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     try{rec.start()}catch(e){}
   }
   function findByText(){
-    var v=$('findIn').value.trim(),w=(v.match(WORD)||[]).map(stem);
-    if(!T.length){setStat('Сначала добавь текст рассказа.',true);return}
-    if(w.length<2){setStat('Введи хотя бы 2–3 слова из нужного места.',true);return}
+    var v=$('findIn').value.trim(),w=(v.match(WORD)||[]).map(stem).slice(-8);
+    if(!T.length){setStat('Сначала добавь текст рассказа.',true);return false}
+    if(w.length<2){setStat('Введи или скажи хотя бы 2–3 слова из нужного места.',true);return false}
     var e=findPos(w,T,conf,false,true);
     if(e===null)e=findPos(w,T,conf,true,true);
-    if(e===null){setStat('Не нашёл такие слова в тексте. Проверь, как они написаны.',true);return}
+    if(e===null){setStat('Не нашёл такие слова в тексте: «'+v+'». Попробуй ещё раз.',true);return false}
     noteMatch(e,true,Math.min(w.length,6));
     setStat('Нашёл место по твоим словам.');
     $('findIn').blur();
+    return true;
   }
+  /* поиск голосом: скажи 2–4 слова, микрофон сам выключится и страница найдёт отрывок */
+  var findMode=false,findT=null,findMax=null,findText='';
+  function routeHeard(t){
+    gotAny=true;heardNow(t);
+    if(findMode){findText=t;clearTimeout(findT);findT=setTimeout(finishVoiceFind,1100);return}
+    onHeard(t);
+  }
+  function stopRecOnly(){
+    if(NATIVE){try{window.AndroidSTT.stop()}catch(e){}}
+    else{try{rec&&rec.stop()}catch(e){}}
+  }
+  function resetFindUI(){findMode=false;clearTimeout(findT);clearTimeout(findMax);var b=$('findMic');b.classList.remove('on');b.textContent='Голосом'}
+  function finishVoiceFind(){
+    if(!findMode)return;
+    var t=findText;resetFindUI();stopRecOnly();heardNow('');
+    if(!t.trim()){setStat('Ничего не услышал. Нажми «Голосом» и скажи 2–4 слова из нужного места.',true);return}
+    $('findIn').value=t.trim();
+    findByText();
+  }
+  async function startVoiceFind(){
+    if(findMode){finishVoiceFind();return}
+    if(!T.length){setStat('Сначала добавь текст рассказа.',true);return}
+    if(!SR&&!NATIVE){setStat('Здесь нет распознавания речи. Введи слова руками.',true);return}
+    if(listening)stop();
+    var me=NATIVE?null:await ensureMic();
+    if(me){setStat('Микрофон не разрешён. Разреши его и попробуй ещё раз.',true);return}
+    findMode=true;findText='';gotAny=false;
+    var b=$('findMic');b.classList.add('on');b.textContent='Слушаю…';
+    setStat('Скажи 2–4 слова из нужного места. Микрофон выключится сам.');
+    if(NATIVE){try{window.AndroidSTT.start()}catch(e){}}else startRec();
+    findMax=setTimeout(finishVoiceFind,9000);
+  }
+  $('findMic').addEventListener('click',startVoiceFind);
   $('findGo').addEventListener('click',findByText);
   $('findIn').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();findByText()}});
   async function keepAwake(){try{if(navigator.wakeLock)wake=await navigator.wakeLock.request('screen')}catch(e){}}
@@ -588,7 +623,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   });
   $dict.addEventListener('blur',function(){if($dict.value.length>1500)$dict.value=$dict.value.slice(-200)});
   window.__stt={
-    heard:function(t){gotAny=true;heardNow(t);onHeard(t)},
+    heard:function(t){routeHeard(t)},
     status:function(m,bad){setStat(m,!!bad)},
     fail:function(m){stop();setStat(m,true)}
   };
