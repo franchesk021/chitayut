@@ -106,13 +106,11 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       <b>Добавь текст рассказа</b>
       <span>Страницы идут по порядку добавления.</span>
       <div class="pickrow">
-        <button class="pickbtn" type="button" data-pick="photo">Фото или скриншот</button>
+        <button class="pickbtn" type="button" data-pick="cam">Фото или скриншот</button>
         <button class="pickbtn" type="button" data-pick="file">Файл</button>
-        <button class="pickbtn" type="button" data-pick="cam">Снять камерой</button>
       </div>
-      <input class="hid" id="pickPhoto" type="file" accept="image/*" multiple aria-label="Выбрать фото">
       <input class="hid" id="pickFile" type="file" multiple aria-label="Выбрать файл">
-      <input class="hid" id="pickCam" type="file" accept="image/*" capture="environment" aria-label="Снять камерой">
+      <input class="hid" id="pickCam" type="file" accept="image/*" aria-label="Фото или скриншот">
     </div>
     <div class="linkrow">
       <input id="urlIn" type="url" inputmode="url" autocomplete="off" placeholder="Вставь ссылку на рассказ" aria-label="Ссылка на рассказ">
@@ -369,7 +367,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     });
     renderFiles();
   }
-  var inputs={photo:$('pickPhoto'),file:$('pickFile'),cam:$('pickCam')};
+  var inputs={file:$('pickFile'),cam:$('pickCam')};
   Array.prototype.forEach.call(document.querySelectorAll('[data-pick]'),function(b){
     b.addEventListener('click',function(){inputs[b.getAttribute('data-pick')].click()});
   });
