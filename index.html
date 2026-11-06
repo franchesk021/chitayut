@@ -132,9 +132,6 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       <button class="mini" id="fMinus" type="button" aria-label="Мельче">A−</button>
       <button class="mini" id="fPlus" type="button" aria-label="Крупнее">A+</button>
       <span class="sp"></span>
-      <button class="mini" id="lMinus" type="button" aria-label="Подсветка отстаёт меньше">←</button>
-      <span class="lval" id="lVal" title="На сколько слов подсветка идёт вперёд">вперёд 0</span>
-      <button class="mini" id="lPlus" type="button" aria-label="Подсветка быстрее">→</button>
       <button class="mini" id="toStart" type="button">В начало</button>
       <button class="mini" id="jump" type="button">К месту чтения</button>
     </div>
@@ -144,18 +141,18 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       <button class="pickbtn" id="findMic" type="button" aria-label="Найти место голосом">Голосом</button>
     </div>
     <div class="card reader" id="reader"><div class="empty">Текста пока нет. Добавь файл или вставь текст выше.</div></div>
-    <p class="hint">Если микрофон страницы не работает, нажми на поле «Диктовка» внизу и на значок микрофона на клавиатуре телефона: приложение будет следить за напечатанными словами. Если приложение потеряло место, коснись слова в тексте, и подсветка перейдёт туда. Работает, пока экран включён и страница открыта: в фоне браузер выключает микрофон. Если запись разговоров в аудитории ограничена правилами, спроси разрешения. Распознавание речи в Chrome идёт через серверы Google.</p>
+    <p class="hint">Если микрофон страницы не работает, нажми на поле «Поиск по тексту» внизу и на значок микрофона на клавиатуре телефона: приложение будет следить за напечатанными словами. Если приложение потеряло место, коснись слова в тексте, и подсветка перейдёт туда. Работает, пока экран включён и страница открыта: в фоне браузер выключает микрофон. Если запись разговоров в аудитории ограничена правилами, спроси разрешения. Распознавание речи в Chrome идёт через серверы Google.</p>
   </section>
 </main>
 
 <div class="bar" role="region" aria-label="Управление">
   <div class="barin">
     <div style="min-width:0">
-      <div class="now-t" id="nowT">Добавь текст, чтобы начать.</div>
+      <div class="now-t" id="nowT">Добавь рассказ или текст, чтобы начать.</div>
       <div class="prog" aria-hidden="true"><i id="prog"></i></div>
       <div class="stat" id="stat" role="status"></div>
       <div class="heard" id="heard" aria-live="off"></div>
-      <textarea class="dict" id="dict" rows="1" placeholder="Диктовка: нажми сюда, потом на микрофон на клавиатуре" aria-label="Диктовка с клавиатуры" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+      <textarea class="dict" id="dict" rows="1" placeholder="Поиск по тексту" aria-label="Поиск по тексту" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
     </div>
     <button class="go" id="go" type="button" aria-pressed="false">Слушать</button>
   </div>
@@ -461,7 +458,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   }
   function updateBar(){
     var n=T.length;
-    if(!n){$('nowT').textContent='Добавь текст, чтобы начать.';$('prog').style.width='0';return}
+    if(!n){$('nowT').textContent='Добавь рассказ или текст, чтобы начать.';$('prog').style.width='0';return}
     $('prog').style.width=Math.round(pos/n*100)+'%';
     if(pos===0){$('nowT').textContent=listening?'Слушаю… жду первые слова.':'Нажми «Слушать», когда начнут читать.';return}
     var a=Math.max(0,pos-8),words=spans.slice(a,pos).map(function(s){return s.textContent}).join(' ');
@@ -474,7 +471,6 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   $('toStart').addEventListener('click',function(){spans.forEach(function(s){s.classList.remove('done','now')});pos=0;conf=0;lastT=0;hist=[];nowFrom=nowTo=doneTo=0;updateBar();window.scrollTo({top:0,behavior:'smooth'})});
   $('jump').addEventListener('click',function(){if(pos)scrollToNow(true)});
   var fs=20;function setFs(d){fs=Math.max(15,Math.min(34,fs+d));document.documentElement.style.setProperty('--fs',fs+'px')}
-  $('lMinus').addEventListener('click',function(){setLead(-1)});$('lPlus').addEventListener('click',function(){setLead(1)});
   $('fMinus').addEventListener('click',function(){setFs(-2)});$('fPlus').addEventListener('click',function(){setFs(2)});
 
   /* ---------- listening ---------- */
@@ -484,9 +480,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   function setStat(t,bad){$stat.textContent=t;$stat.className='stat'+(bad?' bad':'')}
   /* conf: последнее подтверждённое голосом слово; на экране подсветка может идти чуть впереди */
   var conf=0,lastT=0,rate=2.2,hist=[],lead=0;
-  try{lead=+localStorage.getItem('lead')||0}catch(e){}
-  function showLead(){$('lVal').textContent='вперёд '+lead}
-  function setLead(d){lead=Math.max(0,Math.min(12,lead+d));showLead();try{localStorage.setItem('lead',lead)}catch(e){}if(T.length&&lastT){paint(Math.min(T.length,conf+lead),3);scrollToNow(false)}}
+
   function noteMatch(end,jump,k){
     var now=Date.now();
     if(jump)hist=[[now,end]];
@@ -511,14 +505,6 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       else setStat('Не узнаю слова. Проверь, тот ли текст загружен.');
     }
   }
-  showLead();
-  /* между ответами распознавания двигаем подсветку вперёд с темпом чтения, чтобы она не отставала */
-  setInterval(function(){
-    if(!listening||!T.length||!lastT)return;
-    var dt=Date.now()-lastT;if(dt>7000)return;
-    var tgt=Math.min(T.length,conf+lead+Math.min(8,Math.floor(rate*dt/1000)));
-    if(tgt>nowTo){paint(tgt,3);scrollToNow(false)}
-  },200);
   function startRec(){
     rec=new SR();rec.lang='ru-RU';rec.continuous=true;rec.interimResults=true;
     rec.onstart=function(){if(listening)setStat('Микрофон включён. Говори, я слушаю.')};
@@ -606,7 +592,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
     listening=true;lostFor=0;gotAny=false;$go.classList.add('on');$go.textContent='Стоп';$go.setAttribute('aria-pressed','true');
     setStat('Идёт прослушивание. Держи экран включённым.');updateBar();keepAwake();
     if(NATIVE){try{window.AndroidSTT.start()}catch(e){}}else startRec();
-    clearTimeout(wd);wd=setTimeout(function(){if(listening&&!gotAny)setStat('Слов пока нет. Проверь интернет и громкость. Если не помогает, нажми на поле «Диктовка» и говори в микрофон на клавиатуре.',true)},8000);
+    clearTimeout(wd);wd=setTimeout(function(){if(listening&&!gotAny)setStat('Слов пока нет. Проверь интернет и громкость. Если не помогает, нажми на поле «Поиск по тексту» и говори в микрофон на клавиатуре.',true)},8000);
   }
   function stop(){
     listening=false;if(NATIVE){try{window.AndroidSTT.stop()}catch(e){}}try{rec&&rec.stop()}catch(e){}
