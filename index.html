@@ -2,7 +2,7 @@
 /* Layout: one phone column. Top: load the story. Middle: the story itself with a moving highlight. Bottom: a fixed bar with the listen button and the current place. */
 :root{
   --bg:#f3f5f8; --surface:#ffffff; --ink:#0f1a2e; --muted:#5a6578; --line:#dbe1ea;
-  --hi:#ffd23f; --hi-ink:#2e2400; --btn:#0f1a2e; --btn-ink:#ffffff; --ok:#17835a; --bad:#b4372b; --soft:#eaeef4; --done:#8b95a6;
+  --hi:#d86bff; --hi-ink:#2a0838; --btn:#0f1a2e; --btn-ink:#ffffff; --ok:#17835a; --bad:#b4372b; --soft:#eaeef4; --done:#8b95a6;
   --f-display:'Unbounded','Arial Black',system-ui,sans-serif;
   --f-body:'Manrope',system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif;
   --f-read:'Literata',Georgia,'Times New Roman',serif;
@@ -11,10 +11,10 @@
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0c1118; --surface:#151c27; --ink:#eef2f8; --muted:#97a3b6; --line:#263040;
-  --btn:#ffd23f; --btn-ink:#2a2100; --ok:#4cc790; --bad:#ff8a7a; --soft:#1d2635; --done:#5d6879; color-scheme:dark}}
+  --btn:#d86bff; --btn-ink:#2a0838; --ok:#4cc790; --bad:#ff8a7a; --soft:#1d2635; --done:#5d6879; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#0c1118; --surface:#151c27; --ink:#eef2f8; --muted:#97a3b6; --line:#263040;
-  --btn:#ffd23f; --btn-ink:#2a2100; --ok:#4cc790; --bad:#ff8a7a; --soft:#1d2635; --done:#5d6879; color-scheme:dark}
+  --btn:#d86bff; --btn-ink:#2a0838; --ok:#4cc790; --bad:#ff8a7a; --soft:#1d2635; --done:#5d6879; color-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font:400 16px/1.5 var(--f-body);
   padding-block:20px 220px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
@@ -61,7 +61,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
 .reader p{margin:0 0 1em}
 .reader .w{border-radius:4px;cursor:pointer;transition:color .2s}
 .reader .w.done{color:var(--done)}
-.reader .w.now{background:rgba(255,210,63,.42);color:var(--ink);box-shadow:0 0 0 1px rgba(255,210,63,.55);padding:1px 2px;margin:0 -2px;border-radius:4px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.reader .w.now{background:rgba(216,107,255,.38);color:var(--ink);box-shadow:0 0 0 1px rgba(216,107,255,.6);padding:1px 2px;margin:0 -2px;border-radius:4px;box-decoration-break:clone;-webkit-box-decoration-break:clone}
 .empty{color:var(--muted);font-size:15px;padding:18px;text-align:center}
 
 .bar{position:fixed;left:0;right:0;bottom:0;z-index:20;background:var(--surface);border-top:1px solid var(--line);
@@ -88,6 +88,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
 .meta input,.meta select{font:500 13px var(--f-body);padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);min-width:0}
 .meta input{flex:1 1 120px}
 .meta select{flex:0 1 auto}
+.lval{font:600 12px var(--f-body);color:var(--muted);align-self:center;white-space:nowrap}
 </style></head><body>
 
 
@@ -131,6 +132,9 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       <button class="mini" id="fMinus" type="button" aria-label="Мельче">A−</button>
       <button class="mini" id="fPlus" type="button" aria-label="Крупнее">A+</button>
       <span class="sp"></span>
+      <button class="mini" id="lMinus" type="button" aria-label="Подсветка отстаёт меньше">←</button>
+      <span class="lval" id="lVal" title="На сколько слов подсветка идёт вперёд">вперёд 0</span>
+      <button class="mini" id="lPlus" type="button" aria-label="Подсветка быстрее">→</button>
       <button class="mini" id="toStart" type="button">В начало</button>
       <button class="mini" id="jump" type="button">К месту чтения</button>
     </div>
@@ -412,7 +416,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
       out+=esc(par.slice(last));html+='<p>'+out+'</p>';
     });
     $reader.innerHTML=html;spans=Array.prototype.slice.call($reader.querySelectorAll('.w'));updateBar();
-    if(keep>0&&keep<=T.length&&keep<=oldT.length){var same=true;for(var q=0;q<keep;q++)if(T[q]!==oldT[q]){same=false;break}if(same)paint(keep,Math.min(4,keep))}
+    if(keep>0&&keep<=T.length&&keep<=oldT.length){var same=true;for(var q=0;q<keep;q++)if(T[q]!==oldT[q]){same=false;break}if(same)paint(keep,Math.min(4,keep));else{conf=0;lastT=0}}else if(keep===0){conf=0;lastT=0}
     if(pendingStart&&T.length){pendingStart=false;start()}
   }
   function paint(end,k){
@@ -441,11 +445,12 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   }
   $reader.addEventListener('click',function(e){
     var s=e.target.closest('.w');if(!s)return;
-    paint(+s.getAttribute('data-i')+1,1);setStat('Место выбрано вручную.');
+    paint(+s.getAttribute('data-i')+1,1);conf=pos;lastT=Date.now();hist=[];setStat('Место выбрано вручную.');
   });
-  $('toStart').addEventListener('click',function(){spans.forEach(function(s){s.classList.remove('done','now')});pos=0;nowFrom=nowTo=doneTo=0;updateBar();window.scrollTo({top:0,behavior:'smooth'})});
+  $('toStart').addEventListener('click',function(){spans.forEach(function(s){s.classList.remove('done','now')});pos=0;conf=0;lastT=0;hist=[];nowFrom=nowTo=doneTo=0;updateBar();window.scrollTo({top:0,behavior:'smooth'})});
   $('jump').addEventListener('click',function(){if(pos)scrollToNow(true)});
   var fs=20;function setFs(d){fs=Math.max(15,Math.min(34,fs+d));document.documentElement.style.setProperty('--fs',fs+'px')}
+  $('lMinus').addEventListener('click',function(){setLead(-1)});$('lPlus').addEventListener('click',function(){setLead(1)});
   $('fMinus').addEventListener('click',function(){setFs(-2)});$('fPlus').addEventListener('click',function(){setFs(2)});
 
   /* ---------- listening ---------- */
@@ -453,18 +458,43 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
   var $go=$('go'),$stat=$('stat');
   function heardNow(t){var h=$('heard');if(h)h.textContent=t?'Слышу: '+t.trim().slice(-120):''}
   function setStat(t,bad){$stat.textContent=t;$stat.className='stat'+(bad?' bad':'')}
+  /* conf: последнее подтверждённое голосом слово; на экране подсветка может идти чуть впереди */
+  var conf=0,lastT=0,rate=2.2,hist=[],lead=0;
+  try{lead=+localStorage.getItem('lead')||0}catch(e){}
+  function showLead(){$('lVal').textContent='вперёд '+lead}
+  function setLead(d){lead=Math.max(0,Math.min(12,lead+d));showLead();try{localStorage.setItem('lead',lead)}catch(e){}if(T.length&&lastT){paint(Math.min(T.length,conf+lead),3);scrollToNow(false)}}
+  function noteMatch(end,jump){
+    var now=Date.now();
+    if(jump)hist=[[now,end]];
+    else if(lastT&&end>conf&&now-lastT<8000){
+      hist.push([now,end]);if(hist.length>6)hist.shift();
+      if(hist.length>=2){var a=hist[0],b=hist[hist.length-1],dt=(b[0]-a[0])/1000;if(dt>1)rate=Math.max(1,Math.min(4,(b[1]-a[1])/dt))}
+    }
+    conf=end;lastT=now;
+    var t=Math.min(T.length,end+lead);
+    if(t!==nowTo)paint(t,3);
+    scrollToNow(!!jump);setStat(jump?'Нашёл новое место в тексте.':'Слежу за чтением.');
+  }
   function onHeard(text){
     if(!T.length)return;
     var w=(text.match(WORD)||[]).map(stem);if(w.length<2)return;
-    var heard=w.slice(-6),end=findPos(heard,T,pos,false);
-    if(end!==null&&end>=pos-3){lostFor=0;if(end!==pos){paint(end,Math.min(4,heard.length));scrollToNow(false);setStat('Слежу за чтением.')}return}
+    var heard=w.slice(-6),end=findPos(heard,T,conf,false);
+    if(end!==null&&end>=conf-3){lostFor=0;noteMatch(end,false);return}
     lostFor++;
     if(lostFor>=3){
-      var e2=findPos(w.slice(-8),T,pos,true);
-      if(e2!==null){lostFor=0;paint(e2,4);scrollToNow(true);setStat('Нашёл новое место в тексте.')}
+      var e2=findPos(w.slice(-8),T,conf,true);
+      if(e2!==null){lostFor=0;noteMatch(e2,true)}
       else setStat('Не узнаю слова. Проверь, тот ли текст загружен.');
     }
   }
+  showLead();
+  /* между ответами распознавания двигаем подсветку вперёд с темпом чтения, чтобы она не отставала */
+  setInterval(function(){
+    if(!listening||!T.length||!lastT)return;
+    var dt=Date.now()-lastT;if(dt>7000)return;
+    var tgt=Math.min(T.length,conf+lead+Math.min(8,Math.floor(rate*dt/1000)));
+    if(tgt>nowTo){paint(tgt,3);scrollToNow(false)}
+  },200);
   function startRec(){
     rec=new SR();rec.lang='ru-RU';rec.continuous=true;rec.interimResults=true;
     rec.onstart=function(){if(listening)setStat('Микрофон включён. Говори, я слушаю.')};
@@ -528,7 +558,7 @@ textarea{width:100%;min-height:120px;font:inherit;padding:12px 14px;border-radiu
 /* installable app: build the web manifest at runtime so the page stays a single file */
 (function(){try{
   var c=document.createElement('canvas');c.width=c.height=512;var x=c.getContext('2d');
-  x.fillStyle='#0c1118';x.fillRect(0,0,512,512);x.fillStyle='#ffd23f';x.beginPath();x.roundRect(96,150,320,212,36);x.fill();
+  x.fillStyle='#0c1118';x.fillRect(0,0,512,512);x.fillStyle="#d86bff";x.beginPath();x.roundRect(96,150,320,212,36);x.fill();
   x.fillStyle='#0c1118';x.font='700 190px sans-serif';x.textAlign='center';x.textBaseline='middle';x.fillText('Aa',256,258);
   var icon=c.toDataURL('image/png');
   var m={name:'Где читают',short_name:'Где читают',start_url:location.href.split('#')[0],scope:location.href.split('#')[0].replace(/[^\/]*$/,''),display:'standalone',background_color:'#0c1118',theme_color:'#0c1118',lang:'ru',icons:[{src:icon,sizes:'512x512',type:'image/png',purpose:'any'},{src:icon,sizes:'512x512',type:'image/png',purpose:'maskable'}]};
